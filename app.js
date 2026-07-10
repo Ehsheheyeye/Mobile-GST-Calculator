@@ -754,13 +754,98 @@
   }
 
   /* ============================================================
-     15. PWA — service worker
+     15. PWA — service worker registration & update flow
+     ============================================================
+     Goals (per spec):
+       • On every page load, check the server for a new SW.
+       • If a new SW is found, let it install and call skipWaiting.
+       • The new SW claims open clients on activate.
+       • Show a small "Update Available" banner; clicking Reload tells
+         the waiting worker to skipWaiting, and controllerchange
+         auto-reloads the page once it's in control.
+       • A first-time user with no prior SW still gets full offline
+         support (install event pre-caches the app shell).
      ============================================================ */
+
+  // Banner UI hooks. Declared with `function` so the calls inside
+  // the SW .then() block below can resolve it (function declarations
+  // are hoisted, const/let would hit a temporal-dead-zone error).
+  function showUpdateBanner() {
+    const banner = document.getElementById('updateBanner');
+    const btn    = document.getElementById('updateReloadBtn');
+    if (!banner) return;
+    banner.classList.add('show');
+    banner.setAttribute('aria-hidden', 'false');
+    if (btn && !btn.dataset.bound) {
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', () => {
+        // Tell the waiting worker to activate. The controllerchange
+        // listener below will then reload the page.
+        navigator.serviceWorker.getRegistration().then((r) => {
+          if (r && r.waiting) {
+            r.waiting.postMessage({ type: 'SKIP_WAITING' });
+          } else {
+            // No waiting worker (e.g. same-version reload).
+            // Just reload the page to be sure.
+            window.location.reload();
+          }
+        });
+      });
+    }
+  }
+
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(() => {
+    // `updateViaCache: 'none'` ensures the SW script itself is always
+    // fetched from the network, so a redeploy is detected promptly.
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then((reg) => {
+        // 1) On first load and on every subsequent load, *force* a
+        //    server check. The browser only re-checks every ~24h on
+        //    its own, which is too slow for a deployed PWA.
+        reg.update().catch(() => { /* network blip — ignore */ });
+
+        // 2) Also re-check whenever the tab becomes visible again,
+        //    so a user returning to the app picks up updates without
+        //    having to close & reopen the browser.
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            reg.update().catch(() => { /* ignore */ });
+          }
+        });
+
+        // 3) If a new SW is already waiting (e.g. user opened a second
+        //    tab after the first one updated), show the banner right
+        //    away.
+        if (reg.waiting) {
+          showUpdateBanner();
+        }
+
+        // 4) Otherwise, listen for the next install to finish.
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener('statechange', () => {
+            // "installed" + there's an existing controller = a new
+            // version is queued behind the current one. Show the
+            // banner so the user can apply it.
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              showUpdateBanner();
+            }
+          });
+        });
+      })
+      .catch(() => {
         // SW registration is best-effort; offline still works on first load
       });
+
+    // 5) Auto-reload once a new worker has taken control. This fires
+    //    when the user clicks Reload (which triggers SKIP_WAITING)
+    //    and also when the new worker activates on its own.
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
     });
   }
 

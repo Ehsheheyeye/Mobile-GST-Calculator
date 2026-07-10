@@ -354,6 +354,19 @@
     </footer>
   </div>
 
+  <!--
+    ──────────────────────── Update Available Banner ────────────────────────
+    Hidden by default. The Service Worker registration code in app.js
+    toggles `.show` on this element when a new worker has installed
+    and is waiting to take over. The Reload button activates the
+    waiting worker (skipWaiting) and the controllerchange listener in
+    app.js reloads the page once it's in control.
+  -->
+  <div class="update-banner" id="updateBanner" role="status" aria-live="polite" aria-hidden="true">
+    <span class="update-banner-text">A new version is available</span>
+    <button class="update-banner-btn" id="updateReloadBtn" type="button">Reload</button>
+  </div>
+
   <!-- About modal (hidden by default, opened by drawer) -->
   <div class="modal" id="aboutModal" aria-hidden="true" role="dialog" aria-labelledby="aboutTitle">
     <div class="modal-scrim" data-modal-close></div>
